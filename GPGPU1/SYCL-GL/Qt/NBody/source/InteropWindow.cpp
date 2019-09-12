@@ -1,5 +1,15 @@
 #include <InteropWindow.hpp>
 
+// Qt5 includes
+#include <qpa/qplatformnativeinterface.h>
+#ifdef _WIN32
+#include <QtPlatformHeaders/QWGLNativeContext>
+#endif
+#ifdef __linux__
+#undef Bool
+#include <QtPlatformHeaders/QGLXNativeContext>
+#endif
+
 // C++ includes
 #include <limits>
 
@@ -169,20 +179,23 @@ bool InteropWindow::lookForDeviceType(cl::Platform& plat_in, cl_bitfield devtype
     std::vector<cl::Device> possible_devices;
 
     CL_err = plat_in.getDevices(devtype_in, &possible_devices); checkCLerror();
-    std::remove_if(possible_devices.begin(), possible_devices.end(), [&properties](const cl::Device& device)
-    {
-        cl_int err = CL_SUCCESS;
-        try
-        {
-            cl::Context(device, properties.data(), nullptr, nullptr);
-        }
-        catch (cl::Error e)
-        {
-            err = e.err();
-        }
-        
-        return err != CL_SUCCESS;
-    });
+    possible_devices.erase(std::remove_if(possible_devices.begin(),
+                                          possible_devices.end(),
+                                          [&properties](const cl::Device& device)
+                                          {
+                                              cl_int err = CL_SUCCESS;
+                                              try
+                                              {
+                                                  cl::Context(device, properties.data(), nullptr, nullptr);
+                                              }
+                                              catch (cl::Error e)
+                                              {
+                                                  err = e.err();
+                                              }
+                                          
+                                              return err != CL_SUCCESS;
+                                          }),
+                           possible_devices.end());
     
     if (!possible_devices.empty())
     {
@@ -220,14 +233,16 @@ QVector<cl_context_properties> InteropWindow::interopCLcontextProps(const cl::Pl
     QWGLNativeContext native_context = m_gl_context->nativeHandle().value<QWGLNativeContext>();
     result.append(CL_WGL_HDC_KHR);
     result.append(reinterpret_cast<cl_context_properties>(GetDC(reinterpret_cast<HWND>(plat_int->nativeResourceForWindow("handle", this)))));
-#endif
-#ifdef __linux__
-    QGLXNativeContext native_context = m_gl_context->nativeHandle().value<QGLXNativeContext>();
-    result.append(CL_GLX_DISPLAY_KHR);
-    result.append(reinterpret_cast<cl_context_properties>(native_context.display()));
-#endif
     result.append(CL_GL_CONTEXT_KHR);
     result.append(reinterpret_cast<cl_context_properties>(native_context.context()));
+#endif
+#ifdef __linux__
+    //QGLXNativeContext native_context = m_gl_context->nativeHandle().value<QGLXNativeContext>();
+    result.append(CL_GLX_DISPLAY_KHR);
+    result.append(reinterpret_cast<cl_context_properties>(glXGetCurrentDisplay()));
+    result.append(CL_GL_CONTEXT_KHR);
+    result.append(reinterpret_cast<cl_context_properties>(glXGetCurrentContext()));
+#endif
     result.append(0);
 
     return result;
@@ -489,7 +504,7 @@ void InteropWindow::checkGLerror()
 }
 
 
-bool InteropWindow::detectFormatMismatch(QSurfaceFormat& left, QSurfaceFormat& right)
+bool InteropWindow::detectFormatMismatch(QSurfaceFormat left, QSurfaceFormat right)
 {
     if(left.renderableType() != right.renderableType()) return true;
     if(left.majorVersion() != right.majorVersion()) return true;

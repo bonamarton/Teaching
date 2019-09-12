@@ -3,9 +3,6 @@
 // NBody configure
 #include <NBody-Config.hpp>
 
-// NBody includes
-#include <NBodyStep.hpp>
-
 // C++ behavioral defines
 #define _USE_MATH_DEFINES
 
@@ -20,7 +17,7 @@
 #include <QVector>
 
 // C++ includes
-#include <array>
+#include <array>        // std::array
 #include <fstream>
 #include <memory>
 #include <future>
@@ -28,9 +25,19 @@
 #include <memory>
 #include <sstream>
 #include <algorithm>
+#include <memory>       // std::unique_ptr
 
 using real = cl_float;
 using real4 = cl::sycl::float4;
+using real3 = cl::sycl::float3;
+
+namespace kernels { struct NBodyStep; }
+
+enum DoubleBuffer
+{
+    Front = 0,
+    Back = 1
+};
 
 
 class NBody : public InteropWindow
@@ -39,11 +46,12 @@ class NBody : public InteropWindow
 
 public:
 
-    explicit NBody(std::size_t plat_id,
-	               cl_bitfield dev_type,
-	               std::size_t particle_count,
-	               QWindow *parent = 0);
-	~NBody() = default;
+    explicit NBody(std::size_t plat,
+                   std::size_t dev,
+                   cl_bitfield type,
+                   std::size_t particle_count,
+                   QWindow *parent = 0);
+    ~NBody() = default;
 
     virtual void initializeGL() override;
     virtual void initializeCL() override;
@@ -55,60 +63,51 @@ public:
 
 private:
 
-	enum Buffer
-	{
-		Front = 0,
-		Back = 1
-	};
+    enum Buffer
+    {
+        Front = 0,
+        Back = 1
+    };
 
-	// Simulation related variables
-	std::size_t particle_count;
-	real x_abs_range, y_abs_range, z_abs_range,
-		mass_min, mass_max;
+    std::size_t dev_id;
 
-	std::size_t dev_id;
+    // Simulation related variables
+    std::size_t particle_count;
+    real x_abs_range, y_abs_range, z_abs_range,
+         mass_min, mass_max;
 
-	// Host-side containers
-	std::vector<real4> pos_mass;
-	std::vector<real4> velocity;
+    // Host-side containers
+    std::vector<real4> pos_mass;
+    std::vector<real4> velocity;
 
-	// OpenCL related variables
+    // OpenGL related variables
+    std::unique_ptr<QOpenGLShader> vs, fs;
+    std::unique_ptr<QOpenGLShaderProgram> sp;
+    std::array<std::unique_ptr<QOpenGLBuffer>, 2> vbos;
+    std::array<std::unique_ptr<QOpenGLVertexArrayObject>, 2> vaos;
+
+    // OpenCL related variables
+    std::array<cl::BufferGL, 2> CL_posBuffs;
+    std::array<cl::Buffer, 2> CL_velBuffs;
+    std::vector<cl::Memory> interop_resources;  // Bloat
+    bool cl_khr_gl_event_supported;
+
+    // SYCL related variables
     cl::sycl::context context;              // Context
     cl::sycl::device device;                // Device
     cl::sycl::queue compute_queue;          // CommandQueue
-    bool cl_khr_gl_event_supported;
 
-	std::array<cl::sycl::buffer<real4>, 2> posBuffs;   // Simulation data buffers
-	std::array<cl::sycl::buffer<real4>, 2> velBuffs;   // Simulation data buffers
-	std::array<cl::Event, 2> acquire_release;
+    std::array<std::unique_ptr<cl::sycl::buffer<real4>>, 2> posBuffs;   // Simulation data buffers
+    std::array<std::unique_ptr<cl::sycl::buffer<real4>>, 2> velBuffs;   // Simulation data buffers
 
-	std::vector<cl::Memory> interop_resources;  // Bloat
-	std::vector<cl::Event> acquire_wait_list,   // Bloat
-	                       release_wait_list;   // Bloat
-
-	// OpenGL related variables
-	std::unique_ptr<QOpenGLShader> vs, fs;
-	std::unique_ptr<QOpenGLShaderProgram> sp;
-	std::array<std::unique_ptr<QOpenGLBuffer>, 2> vbos;
-	std::array<std::unique_ptr<QOpenGLVertexArrayObject>, 2> vaos;
-
-	bool rightMouseButtonPressed;           // Variables to enable dragging
-	QPoint mousePos;                        // Variables to enable dragging
+    bool rightMouseButtonPressed;           // Variables to enable dragging
+    QPoint mousePos;                        // Variables to enable dragging
     float dist, phi, theta;                 // Mouse polar coordinates
     bool imageDrawn;                        // Whether image has been drawn since last iteration
-	bool needMatrixReset;                   // Whether matrices need to be reset in shaders
+    bool needMatrixReset;                   // Whether matrices need to be reset in shaders
 
-	void mouseDrag(QMouseEvent* event_in);  // Handle mouse dragging
-	void mouseWheel(QWheelEvent* event_in); // Handle mouse wheel movement
+    void mouseDrag(QMouseEvent* event_in);  // Handle mouse dragging
+    void mouseWheel(QWheelEvent* event_in); // Handle mouse wheel movement
 
-	void setMatrices();                     // Update shader matrices
-    /*
-	QVector3D vecEye;                     // Camera position
-	QVector3D vecTarget;                  // Viewed point position
-    QVector3D vecUp;                      // Up vector
-
-	QMatrix4x4 matWorld;                  // World matrix
-	QMatrix4x4 matView;                   // Viewing matrix
-	QMatrix4x4 matProj;                   // Perspective projection matrix
-    */
+    void setMatrices();                     // Update shader matrices
 };

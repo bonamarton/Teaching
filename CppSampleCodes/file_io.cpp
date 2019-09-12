@@ -1,57 +1,68 @@
 #include <array>
 #include <fstream>
 #include <iostream>
-#include <algorithm>	// std::copy
-#include <iterator>		// std::ostream_iterator
+#include <algorithm>    // std::copy
+#include <iterator>     // std::ostream_iterator
 
 struct particle
 {
-	std::array<double, 3> pos, vel;
-	double mass;
+    std::array<double, 3> pos, vel;
+    double mass;
+
+    static constexpr const char* delim = "\t";
 };
 
 std::ostream& operator<<(std::ostream& s, const particle& p)
-{
-	constexpr const auto delim = "\t";
+{   
+    for (const auto& arr : {p.pos, p.vel})
+        std::copy(arr.cbegin(), arr.cend(), std::ostream_iterator<double>{ s, particle::delim });
 
-	for (const auto& arr : {p.pos, p.vel})
-		std::copy(arr.cbegin(), arr.cend(), std::ostream_iterator<double>{ s, delim });
-
-	return s << delim << p.mass;
+    return s << particle::delim << p.mass;
 }
 
 std::istream& operator>>(particle& p, std::istream& s)
 {
-	constexpr const auto delim = "\t";
-	const auto pos = s.tellg();
+    const auto state = s.rdstate();
+    const auto pos = s.tellg();
 
-	std::array<double, 7> temp;
+    std::array<double, 7> temp;
 
-	auto generate_until = [](auto first, auto last, auto gen, auto pred)
-	{
-		for (bool valid = pred(); first != last && valid; ++first, valid = pred())
-		{
-			if (valid)
-			{
-				*first = gen();
-			}
-			else
-			{
-				return false;
-			}
-		}
+    auto generate_until = [](auto first, auto last, auto gen, auto pred)
+    {
+        for (bool valid = pred(); first != last && valid; ++first, valid = pred())
+        {
+            if (valid)
+            {
+                *first = gen();
+            }
+            else
+            {
+                return false;
+            }
+        }
 
-		return true;
-	};
+        return true;
+    };
 
-	generate_until(temp.begin(), temp.end(),
-		           [&]() { double val; s >> val; return val; },
-		           [&]() { return !s.fail(); });
+    if (generate_until(temp.begin(), temp.end(),
+                       [&]() { double val; s >> val; return val; },
+                       [&]() { return !s.fail(); }))
+    {
+        p = particle{ { temp[0], temp[1], temp[2] },
+                      { temp[3], temp[4], temp[5] },
+                      temp[6] };
+        return s;
+    }
+    else
+    {
+        s.seekg(pos);
+        s.setstate(state);
 
-	return s;
+        return s;
+    }
 }
 
 int main()
 {
-	return 0;
+    return 0;
 }

@@ -11,8 +11,10 @@ static const double pi = 3.14159265358979323846264338327950288419716939937510582
 template<typename T>
 auto sq(T const& x){ return x*x; }
 
+class ReduceMapIdx;
+
 template<typename Fr, typename Fm, typename R = std::result_of_t<Fm(size_t)>>
-R reduce_map_idx(Fr fr, Fm fm, size_t n)
+R reduce_map_idx(cl::sycl::queue& queue, Fr fr, Fm fm, size_t n)
 {
 	//block size, assumes input > n
 	size_t local_count = 16;
@@ -20,26 +22,23 @@ R reduce_map_idx(Fr fr, Fm fm, size_t n)
 	std::vector<R> res( (size_t)std::ceil(n/2.0/local_count) );
 
 	{
-		cl::sycl::queue queue{ cl::sycl::gpu_selector() };
-
 		cl::sycl::buffer<R, 1> b_dst(res.data(), res.size()); 
 
 		cl::sycl::nd_range<1> r(n/2, local_count);
 
 		queue.submit([&](cl::sycl::handler& cgh)
 		{
-			cl::sycl::accessor<R, 1, cl::sycl::access::mode::read_write,
-				cl::sycl::access::target::local> tmp(cl::sycl::range<1>(local_count), cgh);
+			cl::sycl::accessor<R, 1, cl::sycl::access::mode::read_write, cl::sycl::access::target::local> tmp(cl::sycl::range<1>(local_count), cgh);
 
-			auto dst  = b_dst.template get_access<cl::sycl::access::mode::write>(cgh);
+			auto dst  = b_dst.template get_access<cl::sycl::access::mode::discard_write>(cgh);
 
-			cgh.parallel_for<class ReduceMapIdx>(r, [=](cl::sycl::nd_item<1> id)
+			cgh.parallel_for<ReduceMapIdx>(r, [=](cl::sycl::nd_item<1> id)
 			{
-				auto g = id.get_group().get(0);
+				auto g = id.get_group().get_id();
 				auto bs = id.get_local_range().get(0);
-				auto l = id.get_local().get(0);
+				auto l = id.get_local_id().get(0);
 
-				auto i = 2 * (g * bs + l);
+				auto i = 2 * (g * bs + l).get(0);
 
 				tmp[l] = fr( fm(i), fm(i+1) );
 
@@ -66,7 +65,7 @@ R reduce_map_idx(Fr fr, Fm fm, size_t n)
 }
 
 template<typename F>
-auto integrate(F f, double L, size_t n)
+auto integrate(cl::sycl::queue queue, F f, double L, size_t n)
 {
 	auto f0 = [=](auto const& i0)
 	{
@@ -80,17 +79,26 @@ auto integrate(F f, double L, size_t n)
 
 	auto sum = [](auto const& x, auto const& y){ return x + y; };
 
-	return reduce_map_idx(sum, f0, n);
+	return reduce_map_idx(queue, sum, f0, n);
 }
 
 int main()
 {
 	auto f = [](auto const& x){ return cl::sycl::exp(-x*x); };
 
-	auto res = integrate(f, 1.5, 1024);
+	try
+	{
+		cl::sycl::queue queue{ cl::sycl::cpu_selector() };
+		std::cout << "Selected platform: " << queue.get_context().get_platform().get_info<cl::sycl::info::platform::name>() << "\n";
+		std::cout << "Selected device:   " << queue.get_device().get_info<cl::sycl::info::device::name>() << "\n";
 
-	//std::cout << "result = " << res << "\n";
-	printf("result    = %16.16f\n", res);
-	printf("reference = %16.16f\n", sqrt(pi));
+		auto res = integrate(queue, f, 1.5, 1024);
+
+		std::cout.precision(16);
+		std::cout << "result = " << res << "\n";
+		std::cout << "exact  = " << sqrt(pi) << "\n";
+	}
+	catch (cl::sycl::exception e){ std::cout << "Exception encountered in SYCL: " << e.what() << "\n"; return -1; }
+
 	return 0;
 }
